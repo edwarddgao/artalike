@@ -7,7 +7,7 @@ import xml.etree.ElementTree as ET
 from datetime import datetime
 
 class Crawler:
-    def __init__(self, db_path="collections.db"):
+    def __init__(self, db_path="data/collections.db"):
         # Rate limit
         self.rate_limit = 80 # requests per second
         self.met_cookies = open("cookie.txt").read()

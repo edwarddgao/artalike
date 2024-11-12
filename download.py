@@ -4,7 +4,7 @@ import pandas as pd
 
 from img2dataset import download
 
-db_path = "collections.db"
+db_path = "data/collections.db"
 conn = sqlite3.connect(db_path)
 cursor = conn.cursor()
 
@@ -54,19 +54,19 @@ def main():
     url_col = "URL"
     id_col = "ID"
     df = pd.DataFrame(image_id_pairs, columns=[url_col, id_col])
-    df.to_csv("image_urls.csv", index=False)
+    df = df.drop_duplicates(subset=[url_col], keep='first')
+    df.to_csv("data/image_urls.csv", index=False)
 
     download(
         processes_count=8,
-        url_list="image_urls.csv",
+        thread_count=32,
+        url_list="data/image_urls.csv",
         image_size=512,
-        output_folder="images",
+        output_folder="data/images",
         output_format="webdataset",
         input_format="csv",
         url_col=url_col,
         caption_col=id_col,
-        enable_wandb=True,
-        disallowed_header_directives=[],
     )
 
 if __name__ == '__main__':
