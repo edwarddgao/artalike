@@ -1,11 +1,11 @@
-# download.py
+# scripts/download.py
 import sqlite3
 import json
 import pandas as pd
 
 from img2dataset import download
 
-db_path = "data/collections.db"
+db_path = "../data/collections.db"
 conn = sqlite3.connect(db_path)
 cursor = conn.cursor()
 

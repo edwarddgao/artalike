@@ -1,4 +1,4 @@
-# embed.py
+# scripts/embed.py
 import webdataset as wds
 import torch
 import torchvision.transforms as transforms
@@ -22,7 +22,7 @@ transform = transforms.Compose([
 
 # Set up dataset pipeline
 dataset = (
-    wds.WebDataset("data/images/{00000..00110}.tar", shardshuffle=False)
+    wds.WebDataset("../data/images/{00000..00110}.tar", shardshuffle=False)
     .decode("pil")
     .to_tuple("jpg", "json")
     .map(lambda x: {

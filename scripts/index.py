@@ -1,10 +1,11 @@
+# scripts/index.py
 import sqlite3
 import faiss
 import numpy as np
 from tqdm import tqdm
 
 # Connect to database
-conn = sqlite3.connect("data/collections.db")
+conn = sqlite3.connect("../data/collections.db")
 cursor = conn.cursor()
 
 # Get all embeddings ordered by ID
@@ -41,7 +42,7 @@ for faiss_ix, (db_ix, embedding_blob) in tqdm(enumerate(rows)):
 index.nprobe = 16    # Number of clusters to visit during search
 
 print("Saving index...")
-faiss.write_index(index, "data/index.faiss")
+faiss.write_index(index, "../data/index.faiss")
 conn.close()
 
 print("Done!")

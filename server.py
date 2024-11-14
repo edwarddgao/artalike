@@ -1,13 +1,17 @@
 # server.py
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 import faiss
 import sqlite3
 import numpy as np
 from contextlib import contextmanager
 import threading
+import os
 
 app = FastAPI()
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:3000"],
@@ -34,7 +38,7 @@ def get_db():
             conn.rollback()
             raise e
 
-@app.get("/search")
+@app.get("/api/search")
 def search(url: str, offset: int = 0, limit: int = 20):
     with get_db() as cursor:
         # Get the query embedding
@@ -62,7 +66,7 @@ def search(url: str, offset: int = 0, limit: int = 20):
         results = [{"url": row[0], "width": row[1], "height": row[2]} for row in cursor.fetchall()]
     return {"results": results}
 
-@app.get("/random")
+@app.get("/api/random")
 def random_images(offset: int = 0, limit: int = 20):
     with get_db() as cursor:
         cursor.execute("SELECT COUNT(*) FROM embeddings")
