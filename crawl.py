@@ -19,10 +19,10 @@ class Crawler:
             CREATE TABLE IF NOT EXISTS artworks (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 museum TEXT,
-                artwork_id TEXT,
+                accession_ref TEXT,
                 data TEXT,
                 updated DATETIME,
-                UNIQUE(museum, artwork_id)
+                UNIQUE(museum, accession_ref)
             )
         ''')
         
@@ -40,33 +40,33 @@ class Crawler:
 
     async def crawl_met(self, session):
         print("Starting Met crawl...")
-        # Get artwork IDs
+        # Get accession refs
         async with session.get("https://collectionapi.metmuseum.org/public/collection/v1/objects") as response:
-            ids = (await response.json())["objectIDs"]
+            refs = (await response.json())["objectIDs"]
 
         # Process artworks with concurrency limit
         sem = asyncio.Semaphore(50)
-        async def process_artwork(id):
+        async def process_artwork(ref):
             async with sem:
                 await asyncio.sleep(1 / self.rate_limit)
-                url = f"https://collectionapi.metmuseum.org/public/collection/v1/objects/{id}"
+                url = f"https://collectionapi.metmuseum.org/public/collection/v1/objects/{ref}"
                 try:
                     async with session.get(url) as response:
                         if response.status == 200:
                             data = await response.json()
-                            self.save_artwork("met", str(id), data)
+                            self.save_artwork("met", ref, data)
                 except Exception as e:
-                    print(f"Error processing Met artwork {id}: {e}")
+                    print(f"Error processing Met artwork {ref}: {e}")
 
-        await asyncio.gather(*[process_artwork(id) for id in ids])
+        await asyncio.gather(*[process_artwork(ref) for ref in refs])
 
     async def crawl_louvre(self, session):
         print("Starting Louvre crawl...")
-        # Get artwork IDs from sitemap
+        # Get accession refs from sitemap
         async with session.get("https://collections.louvre.fr/sitemap.xml") as response:
             root = ET.fromstring(await response.text())
             
-        ids = []
+        refs = []
         namespace = {'ns': 'http://www.sitemaps.org/schemas/sitemap/0.9'}
         
         for sitemap in root.findall('.//ns:loc', namespace):
@@ -75,28 +75,28 @@ class Crawler:
                 sitemap_root = ET.fromstring(await response.text())
                 for url in sitemap_root.findall('.//ns:loc', namespace):
                     if '/ark:/53355/' in url.text:
-                        ids.append(url.text.split('/ark:/53355/')[-1].replace('.json', ''))
+                        refs.append(url.text.split('/ark:/53355/')[-1].replace('.json', ''))
 
         # Process artworks with concurrency limit
         sem = asyncio.Semaphore(50)
-        async def process_artwork(id):
+        async def process_artwork(ref):
             async with sem:
                 await asyncio.sleep(1 / self.rate_limit)
-                url = f"https://collections.louvre.fr/ark:/53355/{id}.json"
+                url = f"https://collections.louvre.fr/ark:/53355/{ref}.json"
                 try:
                     async with session.get(url) as response:
                         if response.status == 200:
                             data = await response.json()
-                            self.save_artwork("louvre", id, data)
+                            self.save_artwork("louvre", ref, data)
                 except Exception as e:
-                    print(f"Error processing Louvre artwork {id}: {e}")
+                    print(f"Error processing Louvre artwork {ref}: {e}")
 
-        await asyncio.gather(*[process_artwork(id) for id in ids])
+        await asyncio.gather(*[process_artwork(ref) for ref in refs])
 
-    def save_artwork(self, museum, artwork_id, data):
+    def save_artwork(self, museum, ref, data):
         self.cursor.execute(
-            'INSERT INTO artworks (museum, artwork_id, data, updated) VALUES (?, ?, ?, ?)',
-            (museum, artwork_id, json.dumps(data), datetime.now().isoformat())
+            'INSERT INTO artworks (museum, accession_ref, data, updated) VALUES (?, ?, ?, ?)',
+            (museum, ref, json.dumps(data), datetime.now().isoformat())
         )
         self.conn.commit()
 

@@ -3,320 +3,230 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Image Gallery with Similarity Search</title>
-    <link rel="icon" href="data:,">
+    <title>Artwork Similarity Gallery</title>
     <style>
         body {
             margin: 0;
             padding: 20px;
             background: #f5f5f5;
-            font-family: system-ui, -apple-system, sans-serif;
         }
-
-        .container {
+        #grid {
             max-width: 1200px;
             margin: 0 auto;
+            contain: content;
         }
-
-        .header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 20px;
-        }
-
-        .back-button {
-            padding: 8px 16px;
-            background: #0070f3;
-            color: white;
-            border: none;
-            border-radius: 4px;
-            cursor: pointer;
-            display: none;
-        }
-
-        .grid-row {
+        .row {
             display: flex;
             margin-bottom: 8px;
+            contain: content;
         }
-
-        .image-item {
-            position: relative;
+        .img-wrapper {
             margin-right: 8px;
             background: #eee;
             border-radius: 4px;
             overflow: hidden;
             cursor: pointer;
+            contain: strict;
         }
-
-        .image-item:last-child {
+        .img-wrapper:last-child {
             margin-right: 0;
         }
-
-        .image-item img {
+        img {
             display: block;
             width: 100%;
             height: 100%;
             object-fit: cover;
-            transition: transform 0.2s ease;
+            will-change: transform;
+            transform: translateZ(0);
         }
-
-        .image-item:hover img {
-            transform: scale(1.05);
+        img:hover {
+            transform: scale(1.05) translateZ(0);
         }
-
-        #loading {
+        /* Loader Styles */
+        #loader {
             text-align: center;
             padding: 20px;
-            display: none;
-        }
-
-        .modal {
-            position: fixed;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background: rgba(0, 0, 0, 0.8);
-            display: none;
-            justify-content: center;
-            align-items: center;
-            z-index: 1000;
-        }
-
-        .modal img {
-            max-width: 90%;
-            max-height: 90vh;
-            border-radius: 4px;
-        }
-
-        .error-message {
-            text-align: center;
-            padding: 20px;
-            color: #e00;
-            background: #fee;
-            border-radius: 4px;
-            margin: 20px 0;
             display: none;
         }
     </style>
 </head>
 <body>
-    <div class="container">
-        <div class="header">
-            <h1 id="galleryTitle">Image Gallery</h1>
-            <button id="backButton" class="back-button">Back to Main Gallery</button>
-        </div>
-        <div id="error" class="error-message"></div>
-        <div id="grid"></div>
-        <div id="loading">Loading...</div>
-    </div>
-    <div id="modal" class="modal">
-        <img id="modalImage" src="" alt="Large preview">
-    </div>
-
+    <div id="grid"></div>
+    <div id="loader">Loading...</div>
     <script>
-        const API_BASE_URL = 'http://localhost:8000';
-        
+        const cache = new Map();
         const grid = document.getElementById('grid');
-        const loading = document.getElementById('loading');
-        const modal = document.getElementById('modal');
-        const modalImage = document.getElementById('modalImage');
-        const backButton = document.getElementById('backButton');
-        const galleryTitle = document.getElementById('galleryTitle');
-        const errorElement = document.getElementById('error');
-        const targetRowHeight = 250;
-        const spacing = 8;
-        let images = [];
-        let isLoading = false;
-        let currentMode = 'random';
-        let selectedImageUrl = null;
+        const loader = document.getElementById('loader');
+        let currentRequest = null;
 
-        function showError(message) {
-            errorElement.textContent = message;
-            errorElement.style.display = 'block';
-            setTimeout(() => {
-                errorElement.style.display = 'none';
-            }, 5000);
+        // State Variables
+        let currentOffset = 0;
+        let isLoading = false;
+        let hasMore = true;
+        const limit = 20;
+        let currentImageUrl = new URL(window.location.href).searchParams.get('image') || null;
+
+        // Debounce Function
+        function debounce(func, wait) {
+            let timeout;
+            return function executedFunction(...args) {
+                const later = () => {
+                    clearTimeout(timeout);
+                    func(...args);
+                };
+                clearTimeout(timeout);
+                timeout = setTimeout(later, wait);
+            };
         }
 
-        async function fetchImages(mode = 'random', imageUrl = null) {
+        // Fetch Images with Pagination
+        async function fetchImages(imageUrl = null, offset = 0) {
+            const cacheKey = (imageUrl || 'random') + '_' + offset;
+            if (cache.has(cacheKey)) {
+                return cache.get(cacheKey);
+            }
+
+            const endpoint = imageUrl ? 
+                `/search?url=${encodeURIComponent(imageUrl)}&offset=${offset}&limit=${limit}` : 
+                `/random?offset=${offset}&limit=${limit}`;
+
             try {
-                const endpoint = mode === 'random' ? '/random' : '/search';
-                const url = new URL(endpoint, API_BASE_URL);
-                
-                if (mode === 'random') {
-                    url.searchParams.set('k', '20');
-                } else {
-                    url.searchParams.set('url', imageUrl);
-                    url.searchParams.set('k', '20');
-                }
-                
-                const response = await fetch(url, {
-                    method: 'GET',
+                const controller = new AbortController();
+                currentRequest?.abort();
+                currentRequest = controller;
+
+                const response = await fetch(`http://localhost:8000${endpoint}`, {
                     credentials: 'include',
-                    headers: {
-                        'Accept': 'application/json'
-                    }
+                    headers: { 'Accept': 'application/json' },
+                    signal: controller.signal
                 });
-                
-                if (!response.ok) {
-                    throw new Error(`HTTP error! status: ${response.status}`);
-                }
-                
+
+                if (!response.ok) throw new Error('Network response was not ok');
                 const data = await response.json();
+                cache.set(cacheKey, data.results);
                 return data.results;
             } catch (error) {
+                if (error.name === 'AbortError') return null;
                 console.error('Fetch error:', error);
-                showError(`Failed to load images: ${error.message}`);
-                return [];
+                return null;
             }
         }
 
-        async function loadImageDimensions(url) {
-            return new Promise((resolve, reject) => {
-                const img = new Image();
-                
-                img.onload = () => {
-                    resolve({
-                        url,
-                        width: img.width || img.naturalWidth,
-                        height: img.height || img.naturalHeight
-                    });
-                };
-                
-                img.onerror = () => {
-                    console.warn(`Failed to load image: ${url}`);
-                    reject(new Error(`Failed to load image: ${url}`));
-                };
-                
-                img.src = url;
-            });
-        }
-
-        function layoutGrid() {
-            if (images.length === 0) {
-                grid.innerHTML = '<div style="text-align: center; padding: 40px;">No images to display</div>';
-                return;
-            }
-
-            const containerWidth = grid.offsetWidth;
+        // Layout Images into Rows
+        async function layoutImages(images, containerWidth) {
+            const targetHeight = 250; // Desired row height
+            const spacing = 8; // Space between images
             const rows = [];
             let currentRow = [];
-            let currentRowWidth = 0;
+            let rowWidth = 0;
 
-            images.forEach((image, i) => {
-                const ratio = image.width / image.height;
-                const scaledWidth = targetRowHeight * ratio;
+            for (let i = 0; i < images.length; i++) {
+                const image = images[i];
+                if (!image) continue;
 
-                if (currentRowWidth + scaledWidth <= containerWidth || currentRow.length === 0) {
+                const aspectRatio = image.width / image.height;
+                const scaledWidth = targetHeight * aspectRatio;
+
+                if (rowWidth + scaledWidth + spacing * currentRow.length <= containerWidth || currentRow.length === 0) {
                     currentRow.push({ ...image, scaledWidth });
-                    currentRowWidth += scaledWidth + spacing;
+                    rowWidth += scaledWidth;
                 } else {
                     rows.push([...currentRow]);
                     currentRow = [{ ...image, scaledWidth }];
-                    currentRowWidth = scaledWidth + spacing;
+                    rowWidth = scaledWidth;
                 }
 
+                // Handle the last row
                 if (i === images.length - 1 && currentRow.length > 0) {
                     rows.push(currentRow);
                 }
-            });
+            }
 
-            grid.innerHTML = '';
-            rows.forEach((row, rowIndex) => {
-                const rowEl = document.createElement('div');
-                rowEl.className = 'grid-row';
-                
-                const rowWidth = row.reduce((sum, img) => sum + img.scaledWidth, 0) + 
-                               (spacing * (row.length - 1));
-                const scale = rowIndex === rows.length - 1 ? 1 : containerWidth / rowWidth;
+            return rows;
+        }
 
-                row.forEach(image => {
+        // Render Rows into HTML
+        function renderRows(rows, containerWidth) {
+            const spacing = 8; // Space between images
+            return rows.map(row => {
+                const totalScaledWidth = row.reduce((sum, img) => sum + img.scaledWidth, 0);
+                const totalSpacing = spacing * (row.length - 1);
+                const scale = (containerWidth - totalSpacing) / totalScaledWidth;
+
+                const imagesHtml = row.map(image => {
                     const width = Math.floor(image.scaledWidth * scale);
-                    const height = Math.floor(targetRowHeight * scale);
+                    const height = Math.floor(250 * scale); // Maintain target height
+                    return `<div class="img-wrapper" style="width:${width}px;height:${height}px">
+                        <img src="${image.url}" width="${width}" height="${height}" loading="lazy" onclick="handleClick('${image.url}')" fetchpriority="high">
+                    </div>`;
+                }).join('');
 
-                    const item = document.createElement('div');
-                    item.className = 'image-item';
-                    item.style.width = `${width}px`;
-                    item.style.height = `${height}px`;
-
-                    const img = document.createElement('img');
-                    img.src = image.url;
-                    img.loading = 'lazy';
-                    img.addEventListener('click', () => handleImageClick(image.url));
-
-                    item.appendChild(img);
-                    rowEl.appendChild(item);
-                });
-
-                grid.appendChild(rowEl);
-            });
+                return `<div class="row">${imagesHtml}</div>`;
+            }).join('');
         }
 
-        async function handleImageClick(imageUrl) {
-            if (currentMode === 'random') {
-                currentMode = 'similar';
-                selectedImageUrl = imageUrl;
-                backButton.style.display = 'block';
-                galleryTitle.textContent = 'Similar Images';
-                await loadMore(true);
-            } else {
-                modalImage.src = imageUrl;
-                modal.style.display = 'flex';
+        // Show Images Function
+        async function showImages(imageUrl = null, reset = true) {
+            if (reset) {
+                images = [];
+                grid.innerHTML = '';
+                currentOffset = 0;
+                hasMore = true;
+                currentImageUrl = imageUrl;
+                window.scrollTo(0, 0); // Scroll to top on new search
             }
-        }
-
-        async function loadMore(reset = false) {
-            if (isLoading) return;
-            
+            if (isLoading || !hasMore) return;
             isLoading = true;
-            loading.style.display = 'block';
-            errorElement.style.display = 'none';
+            loader.style.display = 'block';
 
-            try {
-                const urls = await fetchImages(currentMode, selectedImageUrl);
-                const loadedImages = await Promise.all(
-                    urls.map(url => loadImageDimensions(url).catch(error => {
-                        console.warn(error);
-                        return null;
-                    }))
-                );
-                
-                const validImages = loadedImages.filter(img => img !== null);
-                images = reset ? validImages : [...images, ...validImages];
-                layoutGrid();
-            } catch (error) {
-                console.error('Error loading images:', error);
-                showError('Failed to load images. Please try again later.');
-            } finally {
-                loading.style.display = 'none';
-                isLoading = false;
+            const newImages = await fetchImages(imageUrl, currentOffset);
+            isLoading = false;
+            loader.style.display = 'none';
+
+            if (!newImages || newImages.length === 0) {
+                hasMore = false;
+                return;
             }
+
+            // Update Offset
+            currentOffset += newImages.length;
+
+            // Layout and Render New Rows
+            const containerWidth = grid.offsetWidth;
+            const rows = await layoutImages(newImages.filter(Boolean), containerWidth);
+            const newRowsHtml = renderRows(rows, containerWidth);
+
+            // Append New Rows to Grid
+            grid.insertAdjacentHTML('beforeend', newRowsHtml);
         }
 
-        window.addEventListener('scroll', () => {
-            const buffer = 1000;
-            if (window.innerHeight + window.scrollY + buffer >= document.documentElement.offsetHeight) {
-                loadMore();
+        // Handle Image Click (Search Similar)
+        function handleClick(imageUrl) {
+            history.pushState({ imageUrl }, '', `?image=${encodeURIComponent(imageUrl)}`);
+            showImages(imageUrl, true);
+        }
+
+        // Handle Back/Forward Navigation
+        window.addEventListener('popstate', e => showImages(e.state?.imageUrl));
+
+        // Debounced Resize Event
+        const debouncedResize = debounce(() => {
+            showImages(currentImageUrl, true);
+        }, 250);
+        window.addEventListener('resize', debouncedResize);
+
+        // Infinite Scroll Event
+        window.addEventListener('scroll', debounce(() => {
+            if ((window.innerHeight + window.scrollY) >= document.body.offsetHeight - 500) {
+                // Near the bottom of the page
+                showImages(currentImageUrl, false);
             }
+        }, 200));
+
+        // Initial Load
+        document.addEventListener('DOMContentLoaded', () => {
+            showImages(currentImageUrl, true);
         });
-
-        window.addEventListener('resize', () => layoutGrid());
-
-        backButton.addEventListener('click', async () => {
-            currentMode = 'random';
-            selectedImageUrl = null;
-            backButton.style.display = 'none';
-            galleryTitle.textContent = 'Image Gallery';
-            await loadMore(true);
-        });
-
-        modal.addEventListener('click', () => {
-            modal.style.display = 'none';
-        });
-
-        loadMore(true);
     </script>
 </body>
 </html>

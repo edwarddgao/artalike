@@ -1,0 +1,10 @@
+aiohttp
+asyncio
+faiss-cpu
+fastapi[standard]
+numpy
+pandas
+torch
+torchvision
+transformers
+webdataset
