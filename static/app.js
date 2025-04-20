@@ -411,14 +411,6 @@ window.addEventListener('popstate', async e => { // Still async
     }
 });
 
-// Debounced Resize Event
-const debouncedResize = debounce(() => {
-    // Resetting on resize might be jarring, consider just re-layout?
-    // For now, keep the reset behavior.
-    showImages(currentImageUrl, true);
-}, 250);
-window.addEventListener('resize', debouncedResize);
-
 // Modified Scroll event handler - now triggers showImages directly
 window.addEventListener('scroll', () => {
     // No debounce needed here for responsiveness
