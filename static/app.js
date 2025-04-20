@@ -13,9 +13,9 @@ let currentOffset = 0;
 let isLoading = false;
 let hasMore = true;
 const limit = 20;
-let currentImageUrl = new URL(window.location.href).searchParams.get('image') || null;
-let isPrefetching = false; // Track if we're prefetching the next batch
-let prefetchThreshold = 0.5; // Load more when 50% through current content
+let currentImageUrl = null; // Store the active search URL or null for random
+let isPrefetching = false;
+let prefetchThreshold = 0.5;
 
 // Debounce Function
 function debounce(func, wait) {
@@ -63,15 +63,15 @@ async function fetchImages(imageUrl = null, offset = 0) {
     }
 }
 
-// Layout Images into Rows
-async function layoutImages(images, containerWidth) {
+// Layout Images into Rows (No Single-Image Rows constraint)
+function layoutImages(images, containerWidth) {
     const targetHeight = 250; // Desired row height
     const spacing = 8; // Space between images
     const rows = [];
     let currentRow = [];
     let rowWidth = 0;
-    const minImagesPerRow = 3; // Minimum images desired per row
 
+    // --- Pass 1: Initial Row Creation --- 
     for (let i = 0; i < images.length; i++) {
         const image = images[i];
         if (!image) continue;
@@ -79,27 +79,38 @@ async function layoutImages(images, containerWidth) {
         const aspectRatio = image.width / image.height;
         const scaledWidth = targetHeight * aspectRatio;
 
-        if (rowWidth + scaledWidth + spacing * currentRow.length <= containerWidth || currentRow.length === 0) {
+        // Check if adding the image exceeds the container width or if it's the first image
+        if (currentRow.length === 0 || (rowWidth + scaledWidth + spacing * currentRow.length <= containerWidth)) {
             currentRow.push({ ...image, scaledWidth });
             rowWidth += scaledWidth;
         } else {
+            // Current row is full, push it and start a new one
             rows.push([...currentRow]);
             currentRow = [{ ...image, scaledWidth }];
             rowWidth = scaledWidth;
         }
+    }
+    // Push the last remaining row if it has images
+    if (currentRow.length > 0) {
+        rows.push(currentRow);
+    }
 
-        // Handle the last image - ensure the final row is pushed
-        if (i === images.length - 1 && currentRow.length > 0) {
-            rows.push(currentRow);
-            currentRow = []; // Clear current row as it's now in rows
+    // --- Pass 2: Merge Single-Image Rows (Iterate Backwards) --- 
+    if (rows.length <= 1) {
+        return rows; // Nothing to merge if 0 or 1 row
+    }
+
+    for (let i = rows.length - 1; i > 0; i--) { // Iterate down to index 1
+        if (rows[i].length === 1) { // Check if the current row has exactly one image
+            console.log(`Merging single-image row ${i} into previous row.`);
+            // Merge the single image into the previous row
+            rows[i - 1].push(...rows[i]);
+            // Remove the single-image row
+            rows.splice(i, 1); 
         }
     }
-
-    // Post-processing: Merge last row if it has less than minImagesPerRow images
-    if (rows.length > 1 && rows[rows.length - 1].length < minImagesPerRow) {
-        const lastRowImages = rows.pop(); // Remove the last row
-        rows[rows.length - 1].push(...lastRowImages); // Append its images to the second-to-last row
-    }
+    // Note: The very first row (rows[0]) is allowed to have a single image
+    // if the total number of images necessitates it (e.g., only 1 image in the batch).
 
     return rows;
 }
@@ -188,11 +199,13 @@ function renderRows(rows, containerWidth) {
         const imagesHtml = row.map(image => {
             const width = Math.floor(image.scaledWidth * scale);
             const height = Math.floor(250 * scale); // Maintain target height
-            // Use thumbnail_url for initial src, store full url in data-src
-            const initialSrc = image.thumbnail_url || image.url; // Fallback to full url if thumbnail missing
+            const initialSrc = image.thumbnail_url || image.url; 
             const fullSrc = image.url;
 
-            return `<div class="img-wrapper" style="width:${width}px;height:${height}px">
+            // Store the original scaledWidth before row scaling
+            return `<div class="img-wrapper" 
+                         style="width:${width}px;height:${height}px" 
+                         data-scaled-width="${image.scaledWidth}">
                 <img 
                     src="${initialSrc}" 
                     data-src="${fullSrc}" 
@@ -210,36 +223,45 @@ function renderRows(rows, containerWidth) {
 }
 
 // Show Images Function
-async function showImages(imageUrl = null, reset = true) {
+async function showImages(imageUrl, reset = true) {
+    // If it's a reset, clear everything and set the new state
     if (reset) {
-        images = [];
         grid.innerHTML = '';
         currentOffset = 0;
         hasMore = true;
-        currentImageUrl = imageUrl;
-        window.scrollTo(0, 0); // Scroll to top on new search
+        currentImageUrl = imageUrl; // Update the current view type
+        window.scrollTo(0, 0); // Scroll to top only on explicit reset
+        // Stop observing any existing sentinels/images
+        let existingSentinel = document.getElementById(prefetchSentinelId);
+        if (existingSentinel) prefetchObserver.unobserve(existingSentinel);
+        // Consider unobserving all lazy images too if needed: 
+        // document.querySelectorAll('#grid img.lazy').forEach(img => observer.unobserve(img));
     }
+
     if (isLoading || !hasMore) return;
     isLoading = true;
     loader.style.display = 'block';
 
     const rowStartOffset = currentOffset; // Remember offset before fetching new images
 
-    const newImages = await fetchImages(imageUrl, currentOffset);
-    isLoading = false;
-    loader.style.display = 'none';
+    // Fetch images for the current state (imageUrl) and currentOffset
+    const newImages = await fetchImages(currentImageUrl, currentOffset);
+    // isLoading = false; // Move loader hiding until after rendering
+    // loader.style.display = 'none';
 
     if (!newImages || newImages.length === 0) {
         hasMore = false;
+        isLoading = false;
+        loader.style.display = 'none';
         return;
     }
 
-    // Update Offset
+    // Update Offset for the *next* fetch
     currentOffset += newImages.length;
 
     // Layout and Render New Rows
     const containerWidth = grid.offsetWidth;
-    const rows = await layoutImages(newImages.filter(Boolean), containerWidth);
+    const rows = layoutImages(newImages.filter(Boolean), containerWidth);
     const newRowsHtml = renderRows(rows, containerWidth);
 
     // Append New Rows to Grid
@@ -253,43 +275,175 @@ async function showImages(imageUrl = null, reset = true) {
         });
     }
     
-    // Add prefetch sentinel after adding new content
     addPrefetchSentinel();
     
-    // If we're less than halfway through our content, preload the next batch immediately
-    if (currentOffset < limit * 2 && hasMore) {
-        prefetchNextBatch();
-    }
+    isLoading = false;
+    loader.style.display = 'none';
 }
 
 // Handle Image Click (Search Similar)
 function handleClick(imageUrl) {
-    history.pushState({ imageUrl }, '', `?image=${encodeURIComponent(imageUrl)}`);
+    // 1. Save the current state (view type, offset, scroll position, AND the image being clicked)
+    history.replaceState({
+        imageUrl: currentImageUrl, // null for random, or the search URL if clicking from search results
+        offset: currentOffset,
+        scrollY: window.scrollY,
+        clickedImageUrl: imageUrl // Store the URL of the image triggering the search
+    }, '');
+
+    // 2. Push the new state for the search view
+    history.pushState({ imageUrl: imageUrl }, '', `?image=${encodeURIComponent(imageUrl)}`);
+
+    // 3. Show search results (resets grid, offset, sets currentImageUrl)
     showImages(imageUrl, true);
 }
 
-// Handle Back/Forward Navigation
-window.addEventListener('popstate', e => showImages(e.state?.imageUrl));
+// --- Modified popstate handler (Concurrent Fetching + Targeted Scroll Restore) ---
+window.addEventListener('popstate', async e => { // Still async
+    const state = e.state || {}; // Ensure state is an object
+    const targetImageUrl = state.imageUrl; // URL to restore (null for random)
+    const savedOffset = state.offset || 0;
+    const savedScrollY = state.scrollY;
+    const previouslyClickedImageUrl = state.clickedImageUrl; // Get the URL that was clicked to navigate away
+
+    console.log("Popstate triggered. Restoring state:", state);
+
+    // Prevent scroll/prefetch triggers during restore
+    isLoading = true; 
+    loader.style.display = 'block';
+    grid.innerHTML = ''; // Clear the grid immediately
+
+    // --- State Restoration Logic ---
+    currentImageUrl = targetImageUrl; // Set the mode (random or search)
+    currentOffset = 0; // Will be updated after fetching
+    hasMore = true; // Assume true initially
+
+    const numBatchesNeeded = Math.ceil(savedOffset / limit);
+    console.log(`Need to restore ${numBatchesNeeded} batches to reach offset ${savedOffset}`);
+
+    if (numBatchesNeeded <= 0 && !targetImageUrl) { // Handle case of going back to empty initial random state
+        console.log("No batches needed for restore, loading initial view.");
+        await showImages(null, true); // Perform a clean initial load of random
+    } else if (numBatchesNeeded <=0 && targetImageUrl) { // Handle case of going back to initial search state (only first batch)
+        console.log("Restoring initial search view.");
+        await showImages(targetImageUrl, true);
+    } else { // Restore multiple batches
+        // Create fetch promises for all needed batches
+        const fetchPromises = [];
+        for (let i = 0; i < numBatchesNeeded; i++) {
+            fetchPromises.push(fetchImages(currentImageUrl, i * limit));
+        }
+
+        try {
+            const allResultsArrays = await Promise.all(fetchPromises);
+            const allImages = allResultsArrays.flat().filter(Boolean);
+
+            if (allImages.length === 0) {
+                console.log("No images found during state restoration.");
+                hasMore = false;
+            } else {
+                // Layout and Render All Fetched Images at Once
+                const containerWidth = grid.offsetWidth;
+                // *** Crucially use renderRows which contains the short-row logic *** 
+                const rows = layoutImages(allImages, containerWidth);
+                const allRowsHtml = renderRows(rows, containerWidth);
+                grid.innerHTML = allRowsHtml; // Replace content in one go
+
+                // Update state *after* rendering
+                currentOffset = allImages.length; // Set offset to total loaded
+                const lastBatch = allResultsArrays[allResultsArrays.length - 1];
+                if (!lastBatch || lastBatch.length < limit) {
+                    hasMore = false;
+                }
+
+                // Observe all newly added images for lazy loading
+                document.querySelectorAll('#grid img.lazy').forEach(img => {
+                    observer.observe(img);
+                });
+                
+                // Add prefetch sentinel now that content is loaded
+                addPrefetchSentinel();
+            }
+        } catch (error) {
+            console.error("Error during concurrent fetch for state restoration:", error);
+            hasMore = false; // Assume error means no more content
+        }
+    }
+    // --- Scroll Restoration --- 
+    isLoading = false;
+    loader.style.display = 'none';
+    console.log("State restoration content loaded.");
+
+    // Prioritize scrolling to the clicked image if possible
+    let scrollTargetRestored = false;
+    if (previouslyClickedImageUrl) {
+        // Need slight delay for browser to render the new grid content
+        requestAnimationFrame(() => { 
+            const targetElement = grid.querySelector(`img[data-src=\"${previouslyClickedImageUrl}\"]`);
+            if (targetElement) {
+                console.log(`Scrolling to previously clicked image: ${previouslyClickedImageUrl}`);
+                targetElement.scrollIntoView({ block: 'center', behavior: 'auto' });
+                scrollTargetRestored = true;
+            } else {
+                console.log("Previously clicked image not found in restored view.");
+            }
+            // If target wasn't found, fall back to scrollY restore *outside* this animation frame
+            if (!scrollTargetRestored && savedScrollY !== undefined) {
+                 console.log(`Falling back to restoring scrollY: ${savedScrollY}`);
+                 window.scrollTo(0, savedScrollY);
+            } else if (!scrollTargetRestored) {
+                 console.log("No scroll target, scrolling to top.");
+                 window.scrollTo(0, 0);
+            }
+        });
+    } else if (savedScrollY !== undefined) {
+        // If no specific image was clicked (e.g., back from external site), restore Y
+         console.log(`Restoring scrollY: ${savedScrollY}`);
+         requestAnimationFrame(() => { 
+             window.scrollTo(0, savedScrollY);
+         });
+    } else {
+        // Default to top if no scroll info
+        console.log("No scroll info, scrolling to top.");
+         requestAnimationFrame(() => { 
+             window.scrollTo(0, 0);
+         });
+    }
+});
 
 // Debounced Resize Event
 const debouncedResize = debounce(() => {
+    // Resetting on resize might be jarring, consider just re-layout?
+    // For now, keep the reset behavior.
     showImages(currentImageUrl, true);
 }, 250);
 window.addEventListener('resize', debouncedResize);
 
-// Scroll event handler - more aggressive than before
+// Modified Scroll event handler - now triggers showImages directly
 window.addEventListener('scroll', () => {
+    // No debounce needed here for responsiveness
     const scrollPosition = window.scrollY + window.innerHeight;
     const docHeight = document.body.offsetHeight;
     const scrollPercentage = scrollPosition / docHeight;
     
-    // If we're getting close to the bottom (within 30%), load more immediately
+    // If we're getting close to the bottom, load more immediately
+    // Ensure not already loading and there's potentially more content
     if (scrollPercentage > 0.7 && !isLoading && hasMore) {
-        showImages(currentImageUrl, false);
+        showImages(currentImageUrl, false); // reset=false to append
     }
 });
 
 // Initial Load
 document.addEventListener('DOMContentLoaded', () => {
-    showImages(currentImageUrl, true);
+    // Check if URL has an image search parameter on initial load
+    const initialSearchUrl = new URL(window.location.href).searchParams.get('image');
+    if (initialSearchUrl) {
+        // Store initial state correctly
+        history.replaceState({ imageUrl: initialSearchUrl }, '', window.location.href);
+        showImages(initialSearchUrl, true); 
+    } else {
+        // Store initial random state
+        history.replaceState({ imageUrl: null, offset: 0, scrollY: 0 }, '');
+        showImages(null, true); // Load initial random images
+    }
 });

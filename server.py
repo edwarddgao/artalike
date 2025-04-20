@@ -9,6 +9,7 @@ import numpy as np
 from contextlib import contextmanager
 import threading
 import os
+import random
 
 # Get the directory where the script is located
 script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -21,7 +22,8 @@ app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"], # Adjust if your frontend runs elsewhere
+    # Allow all origins for simplicity, restrict in production if needed
+    allow_origins=["*"], 
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -33,6 +35,7 @@ if not os.path.exists(index_path):
     raise FileNotFoundError(f"FAISS index file not found at {index_path}. Please run scripts/index.py first.")
 index = faiss.read_index(index_path)
 print("FAISS index loaded.")
+print(f"FAISS index loaded. Index size: {index.ntotal}") # Log index size
 
 # Initialize a global SQLite connection with thread safety
 print(f"Connecting to database at {db_path}...")
@@ -69,6 +72,11 @@ def search(url: str, offset: int = 0, limit: int = 20):
 
         # Adjust IDs (FAISS is 0-indexed, SQLite is 1-indexed)
         neighbor_ids = (I[0][offset:] + 1).tolist()
+
+        # Handle cases where k > index.ntotal
+        if not neighbor_ids:
+            return {"results": []}
+
         placeholder = ','.join(['?'] * len(neighbor_ids))
 
         # Fetch image data including thumbnail_url
@@ -92,31 +100,62 @@ def search(url: str, offset: int = 0, limit: int = 20):
 
 @app.get("/api/random")
 def random_images(offset: int = 0, limit: int = 20):
+    # Use the total count from the FAISS index
+    total_vectors = index.ntotal
+    if total_vectors == 0:
+        print("Error: FAISS index is empty.")
+        return {"results": []}
+
+    # Ensure limit doesn't exceed total vectors
+    actual_limit = min(limit, total_vectors)
+
+    # Generate unique random FAISS indices (0-based)
+    try:
+        random_indices_0_based = random.sample(range(total_vectors), actual_limit)
+    except ValueError as e:
+        # Handle case where limit > total_vectors (should be caught by min, but safety check)
+        print(f"Warning generating random indices: {e}. Using population size.")
+        random_indices_0_based = list(range(total_vectors))
+        random.shuffle(random_indices_0_based)
+
+    # Convert to 1-based database IDs
+    random_db_ids = [idx + 1 for idx in random_indices_0_based]
+
+    if not random_db_ids:
+        return {"results": []}
+
+    placeholder = ','.join(['?'] * len(random_db_ids))
+
     with get_db() as cursor:
-        cursor.execute("SELECT COUNT(*) FROM embeddings")
-        total = cursor.fetchone()[0]
-
-        if total == 0:
-            return {"results": []}
-
-        # Fetch random images including thumbnail_url
-        cursor.execute("""
+        # Fetch data for the randomly selected IDs
+        # No need for LIMIT or OFFSET here as we fetch specific IDs
+        cursor.execute(f"""
             SELECT url, width, height, thumbnail_url
-            FROM embeddings 
-            ORDER BY RANDOM()
-            LIMIT ? OFFSET ?
-        """, (limit, offset))
+            FROM embeddings
+            WHERE id IN ({placeholder})
+        """, random_db_ids)
 
         # Map results including thumbnail_url
-        results = [
-            {
+        fetched_rows = cursor.fetchall()
+        # Create a dictionary for quick lookup by ID (Corrected syntax)
+        results_map = {
+            row[0]: { # Assuming URL is unique and suitable as a key
                 "url": row[0],
                 "width": row[1],
                 "height": row[2],
-                "thumbnail_url": row[3] # Added
+                "thumbnail_url": row[3]
             }
-            for row in cursor.fetchall()
-        ]
+            for row in fetched_rows
+        }
+        # Reorder results based on the original random ID list to maintain some randomness in order?
+        # This might not be strictly necessary if frontend doesn't care about order
+        # For now, return in the order the DB gave them
+        results = list(results_map.values())
+
+        # If DB returned fewer rows than requested IDs (shouldn't happen if index/DB sync), log warning
+        if len(results) != len(random_db_ids):
+            print(f"Warning: Requested {len(random_db_ids)} random IDs but DB returned {len(results)}")
+
     return {"results": results}
 
 # Serve static files (HTML, CSS, JS)
