@@ -8,4 +8,5 @@ torch
 torchvision
 transformers
 webdataset
-img2dataset
+albumentations==1.4.16
+img2dataset==1.44.1

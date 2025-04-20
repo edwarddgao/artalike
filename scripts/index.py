@@ -3,9 +3,17 @@ import sqlite3
 import faiss
 import numpy as np
 from tqdm import tqdm
+import os
+
+# Get the directory where the script is located
+script_dir = os.path.dirname(os.path.abspath(__file__))
+# Construct paths relative to the script directory
+data_dir = os.path.join(script_dir, "../data")
+db_path = os.path.join(data_dir, "collections.db")
+index_path = os.path.join(data_dir, "index.faiss")
 
 # Connect to database
-conn = sqlite3.connect("../data/collections.db")
+conn = sqlite3.connect(db_path)
 cursor = conn.cursor()
 
 # Get all embeddings ordered by ID
@@ -42,7 +50,7 @@ for faiss_ix, (db_ix, embedding_blob) in tqdm(enumerate(rows)):
 index.nprobe = 16    # Number of clusters to visit during search
 
 print("Saving index...")
-faiss.write_index(index, "../data/index.faiss")
+faiss.write_index(index, index_path)
 conn.close()
 
 print("Done!")
