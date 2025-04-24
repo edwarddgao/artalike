@@ -115,28 +115,26 @@ function layoutImages(images, containerWidth) {
     return rows;
 }
 
-// Intersection Observer for Lazy Loading
-let observer;
-const lazyLoadImage = (entries, observer) => {
-    entries.forEach(entry => {
-        if (entry.isIntersecting) {
-            const img = entry.target;
-            const fullSrc = img.dataset.src;
-            if (fullSrc) {
-                img.src = fullSrc; // Swap src to full resolution
-                img.classList.remove('lazy'); // Optional: remove lazy class
-                // Optional: Add loaded class for styling (e.g., fade-in)
-                img.classList.add('loaded'); 
-                observer.unobserve(img); // Stop observing once loaded
+// Simplified function to upgrade thumbnails to full images after they load
+function setupImageUpgrading() {
+    // Use event delegation to handle all images, including ones added dynamically
+    grid.addEventListener('load', function(e) {
+        // Check if the loaded element is an image with data-fullsrc
+        if (e.target.tagName === 'IMG' && e.target.dataset.fullsrc) {
+            const img = e.target;
+            const fullSrc = img.dataset.fullsrc;
+            
+            // Only replace if we haven't already loaded the full image
+            if (img.currentSrc !== fullSrc) {
+                img.src = fullSrc;
+                img.classList.add('loaded'); // Optional: add loaded class for styling
+                
+                // Clean up to avoid repeated loads
+                delete img.dataset.fullsrc;
             }
         }
-    });
-};
-
-// Initialize Observer (consider rootMargin for earlier loading)
-observer = new IntersectionObserver(lazyLoadImage, {
-    rootMargin: '0px 0px 200px 0px' // Load images 200px before they enter viewport
-});
+    }, true); // Use capture to get the events before they reach the target
+}
 
 // Prefetch Observer - load more content when a prefetch sentinel comes into view
 let prefetchObserver;
@@ -202,16 +200,16 @@ function renderRows(rows, containerWidth) {
             const initialSrc = image.thumbnail_url || image.url; 
             const fullSrc = image.url;
 
-            // Store the original scaledWidth before row scaling
+            // Updated to use native lazy loading and data-fullsrc
             return `<div class="img-wrapper" 
                          style="width:${width}px;height:${height}px" 
                          data-scaled-width="${image.scaledWidth}">
                 <img 
                     src="${initialSrc}" 
-                    data-src="${fullSrc}" 
+                    data-fullsrc="${fullSrc}" 
+                    loading="lazy" 
                     width="${width}" 
                     height="${height}" 
-                    class="lazy" 
                     onclick="handleClick('${image.url}')"
                 >
             </div>`;
@@ -231,11 +229,9 @@ async function showImages(imageUrl, reset = true) {
         hasMore = true;
         currentImageUrl = imageUrl; // Update the current view type
         window.scrollTo(0, 0); // Scroll to top only on explicit reset
-        // Stop observing any existing sentinels/images
+        // Stop observing any existing sentinels
         let existingSentinel = document.getElementById(prefetchSentinelId);
         if (existingSentinel) prefetchObserver.unobserve(existingSentinel);
-        // Consider unobserving all lazy images too if needed: 
-        // document.querySelectorAll('#grid img.lazy').forEach(img => observer.unobserve(img));
     }
 
     if (isLoading || !hasMore) return;
@@ -246,8 +242,6 @@ async function showImages(imageUrl, reset = true) {
 
     // Fetch images for the current state (imageUrl) and currentOffset
     const newImages = await fetchImages(currentImageUrl, currentOffset);
-    // isLoading = false; // Move loader hiding until after rendering
-    // loader.style.display = 'none';
 
     if (!newImages || newImages.length === 0) {
         hasMore = false;
@@ -266,14 +260,6 @@ async function showImages(imageUrl, reset = true) {
 
     // Append New Rows to Grid
     grid.insertAdjacentHTML('beforeend', newRowsHtml);
-
-    // Observe newly added images
-    const newImagesSelector = rows.map((_, i) => `#row-${rowStartOffset + i} img.lazy`).join(', ');
-    if (newImagesSelector) { 
-        document.querySelectorAll(newImagesSelector).forEach(img => {
-            observer.observe(img);
-        });
-    }
     
     addPrefetchSentinel();
     
@@ -355,11 +341,6 @@ window.addEventListener('popstate', async e => { // Still async
                 if (!lastBatch || lastBatch.length < limit) {
                     hasMore = false;
                 }
-
-                // Observe all newly added images for lazy loading
-                document.querySelectorAll('#grid img.lazy').forEach(img => {
-                    observer.observe(img);
-                });
                 
                 // Add prefetch sentinel now that content is loaded
                 addPrefetchSentinel();
@@ -379,7 +360,7 @@ window.addEventListener('popstate', async e => { // Still async
     if (previouslyClickedImageUrl) {
         // Need slight delay for browser to render the new grid content
         requestAnimationFrame(() => { 
-            const targetElement = grid.querySelector(`img[data-src=\"${previouslyClickedImageUrl}\"]`);
+            const targetElement = grid.querySelector(`img[data-fullsrc=\"${previouslyClickedImageUrl}\"]`);
             if (targetElement) {
                 console.log(`Scrolling to previously clicked image: ${previouslyClickedImageUrl}`);
                 targetElement.scrollIntoView({ block: 'center', behavior: 'auto' });
@@ -427,6 +408,9 @@ window.addEventListener('scroll', () => {
 
 // Initial Load
 document.addEventListener('DOMContentLoaded', () => {
+    // Set up the image upgrading system
+    setupImageUpgrading();
+    
     // Check if URL has an image search parameter on initial load
     const initialSearchUrl = new URL(window.location.href).searchParams.get('image');
     if (initialSearchUrl) {
