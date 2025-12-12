@@ -81,21 +81,24 @@ def search(url: str, offset: int = 0, limit: int = 20):
 
         # Fetch image data including thumbnail_url
         cursor.execute(f"""
-            SELECT url, width, height, thumbnail_url
-            FROM embeddings 
+            SELECT id, url, width, height, thumbnail_url
+            FROM embeddings
             WHERE id IN ({placeholder})
         """, neighbor_ids)
 
-        # Map results including thumbnail_url
-        results = [
-            {
-                "url": row[0],
-                "width": row[1],
-                "height": row[2],
-                "thumbnail_url": row[3] # Added
+        # Build lookup by ID
+        rows_by_id = {
+            row[0]: {
+                "url": row[1],
+                "width": row[2],
+                "height": row[3],
+                "thumbnail_url": row[4]
             }
             for row in cursor.fetchall()
-        ]
+        }
+
+        # Reorder results to match FAISS similarity ranking
+        results = [rows_by_id[id] for id in neighbor_ids if id in rows_by_id]
     return {"results": results}
 
 @app.get("/api/random")

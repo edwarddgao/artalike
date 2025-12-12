@@ -187,7 +187,7 @@ async function prefetchNextBatch() {
 }
 
 // Render Rows into HTML
-function renderRows(rows, containerWidth) {
+function renderRows(rows, containerWidth, isFirstBatch = false) {
     const spacing = 8; // Space between images
     return rows.map((row, rowIndex) => {
         const totalScaledWidth = row.reduce((sum, img) => sum + img.scaledWidth, 0);
@@ -197,26 +197,25 @@ function renderRows(rows, containerWidth) {
         const imagesHtml = row.map(image => {
             const width = Math.floor(image.scaledWidth * scale);
             const height = Math.floor(250 * scale); // Maintain target height
-            const initialSrc = image.thumbnail_url || image.url; 
-            const fullSrc = image.url;
+            const src = image.thumbnail_url || image.url;
+            // Load first batch eagerly, lazy load subsequent batches
+            const loadingAttr = isFirstBatch ? 'eager' : 'lazy';
 
-            // Updated to use native lazy loading and data-fullsrc
-            return `<div class="img-wrapper" 
-                         style="width:${width}px;height:${height}px" 
+            return `<div class="img-wrapper"
+                         style="width:${width}px;height:${height}px"
                          data-scaled-width="${image.scaledWidth}">
-                <img 
-                    src="${initialSrc}" 
-                    data-fullsrc="${fullSrc}" 
-                    loading="lazy" 
-                    width="${width}" 
-                    height="${height}" 
+                <img
+                    src="${src}"
+                    loading="${loadingAttr}"
+                    width="${width}"
+                    height="${height}"
                     onclick="handleClick('${image.url}')"
                 >
             </div>`;
         }).join('');
 
         // Add a unique ID to each new row to help select images for observation
-        return `<div class="row" id="row-${currentOffset + rowIndex}">${imagesHtml}</div>`; 
+        return `<div class="row" id="row-${currentOffset + rowIndex}">${imagesHtml}</div>`;
     }).join('');
 }
 
@@ -256,7 +255,7 @@ async function showImages(imageUrl, reset = true) {
     // Layout and Render New Rows
     const containerWidth = grid.offsetWidth;
     const rows = layoutImages(newImages.filter(Boolean), containerWidth);
-    const newRowsHtml = renderRows(rows, containerWidth);
+    const newRowsHtml = renderRows(rows, containerWidth, reset);
 
     // Append New Rows to Grid
     grid.insertAdjacentHTML('beforeend', newRowsHtml);
@@ -330,9 +329,9 @@ window.addEventListener('popstate', async e => { // Still async
             } else {
                 // Layout and Render All Fetched Images at Once
                 const containerWidth = grid.offsetWidth;
-                // *** Crucially use renderRows which contains the short-row logic *** 
+                // *** Crucially use renderRows which contains the short-row logic ***
                 const rows = layoutImages(allImages, containerWidth);
-                const allRowsHtml = renderRows(rows, containerWidth);
+                const allRowsHtml = renderRows(rows, containerWidth, true);
                 grid.innerHTML = allRowsHtml; // Replace content in one go
 
                 // Update state *after* rendering
