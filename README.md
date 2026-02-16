@@ -1,4 +1,4 @@
-# [Artalike](artalike.org) - Image Similarity Search
+# [Artalike](https://artalike.org/) - Image Similarity Search
 
 Artalike is a web application that allows users to find visually similar images within a collection. It uses FAISS for efficient similarity search based on image embeddings.
 
